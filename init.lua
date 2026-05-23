@@ -129,3 +129,24 @@ vim.keymap.set("n", "<leader>gg", function()
 end, {
   desc = "Open LazyGit",
 })
+
+-- ============================================================
+-- Terminal / Codex
+-- ============================================================
+
+local codex = Terminal:new({
+  cmd = "codex",
+  hidden = true,
+  direction = "float",
+  close_on_exit = false,
+  float_opts = {
+    border = "rounded",
+  },
+})
+
+vim.keymap.set("n", "<leader>cc", function()
+  vim.cmd("silent! write")
+  codex:toggle()
+end, {
+  desc = "Open Codex",
+})
