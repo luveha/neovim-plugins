@@ -1,0 +1,32 @@
+{
+  "plugins": {
+    "cmp-buffer": {
+      "rev": "b74fab3656eea9de20a9b8116afa3cfc4ec09657",
+      "src": "https://github.com/hrsh7th/cmp-buffer"
+    },
+    "cmp-cmdline": {
+      "rev": "d126061b624e0af6c3a556428712dd4d4194ec6d",
+      "src": "https://github.com/hrsh7th/cmp-cmdline"
+    },
+    "cmp-path": {
+      "rev": "c642487086dbd9a93160e1679a1327be111cbc25",
+      "src": "https://github.com/hrsh7th/cmp-path"
+    },
+    "mini.nvim": {
+      "rev": "44657837c7338e52727facc85c1d95bec1f6bd7c",
+      "src": "https://github.com/nvim-mini/mini.nvim"
+    },
+    "nvim-cmp": {
+      "rev": "a1d504892f2bc56c2e79b65c6faded2fd21f3eca",
+      "src": "https://github.com/hrsh7th/nvim-cmp"
+    },
+    "nvim-treesitter": {
+      "rev": "4916d6592ede8c07973490d9322f187e07dfefac",
+      "src": "https://github.com/nvim-treesitter/nvim-treesitter"
+    },
+    "render-markdown.nvim": {
+      "rev": "629eb9533ec989d9d5c6cab8f3ad5372422c24e0",
+      "src": "https://github.com/MeanderingProgrammer/render-markdown.nvim"
+    }
+  }
+}
