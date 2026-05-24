@@ -152,3 +152,14 @@ vim.keymap.set("n", "<leader>cc", function()
 end, {
   desc = "Open Codex",
 })
+
+
+-- ============================================================
+-- LSP's 
+-- ============================================================
+
+vim.pack.add{
+  { src = 'https://github.com/neovim/nvim-lspconfig' },
+}
+
+
