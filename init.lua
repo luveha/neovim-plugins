@@ -23,6 +23,7 @@ vim.pack.add({
   "https://github.com/nvim-treesitter/nvim-treesitter",
   "https://github.com/nvim-mini/mini.nvim",
   "https://github.com/MeanderingProgrammer/render-markdown.nvim",
+  "https://github.com/nvim-telescope/telescope.nvim",
 
   -- Completion
   "https://github.com/hrsh7th/nvim-cmp",
@@ -33,7 +34,7 @@ vim.pack.add({
 
   -- Terminal
   "https://github.com/akinsho/toggleterm.nvim",
-})
+}, { load = true })
 
 vim.pack.add({
   -- File tree
@@ -46,14 +47,79 @@ vim.pack.add({
   "https://github.com/nvim-lua/plenary.nvim",
   "https://github.com/MunifTanjim/nui.nvim",
   "https://github.com/nvim-tree/nvim-web-devicons",
+}, { load = true })
+
+-- ============================================================
+-- Treesitter
+-- ============================================================
+
+require("nvim-treesitter").setup({
+  install_dir = vim.fn.stdpath("data") .. "/site",
 })
 
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "go", "lua", "vim" },
+  callback = function()
+    local ok = pcall(vim.treesitter.start)
+    if not ok then
+      vim.schedule(function()
+        vim.notify(
+          "Tree-sitter parser missing for " .. vim.bo.filetype .. '. Run :TSInstall ' .. vim.bo.filetype,
+          vim.log.levels.WARN
+        )
+      end)
+    end
+  end,
+})
+
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "go" },
+  callback = function()
+    vim.bo.syntax = "go"
+    vim.bo.indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+  end,
+})
 
 -- ============================================================
 -- Render Markdown
 -- ============================================================
 
 require("render-markdown").setup({})
+
+
+-- ============================================================
+-- Telescope
+-- ============================================================
+
+local telescope = require("telescope")
+local builtin = require("telescope.builtin")
+
+telescope.setup({
+  defaults = {
+    mappings = {
+      i = {
+        ["<Esc>"] = require("telescope.actions").close,
+        ["<C-n>"] = require("telescope.actions").close,
+      },
+    },
+  },
+})
+
+vim.keymap.set("n", "<leader>ff", builtin.find_files, {
+  desc = "Find files",
+})
+
+vim.keymap.set("n", "<leader>fg", builtin.live_grep, {
+  desc = "Live grep",
+})
+
+vim.keymap.set("n", "<leader>fb", builtin.buffers, {
+  desc = "Find buffers",
+})
+
+vim.keymap.set("n", "<leader>fh", builtin.help_tags, {
+  desc = "Help tags",
+})
 
 
 -- ============================================================
@@ -160,9 +226,9 @@ end, {
 -- LSP's 
 -- ============================================================
 
-vim.pack.add{
+vim.pack.add({
   { src = 'https://github.com/neovim/nvim-lspconfig' },
-}
+}, { load = true })
 
 local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
