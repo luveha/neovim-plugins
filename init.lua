@@ -29,6 +29,7 @@ vim.pack.add({
   "https://github.com/hrsh7th/cmp-cmdline",
   "https://github.com/hrsh7th/cmp-path",
   "https://github.com/hrsh7th/cmp-buffer",
+  "https://github.com/hrsh7th/cmp-nvim-lsp",
 
   -- Terminal
   "https://github.com/akinsho/toggleterm.nvim",
@@ -80,6 +81,7 @@ local cmp = require("cmp")
 cmp.setup({
   sources = {
     { name = "buffer" },
+    { name = "nvim_lsp" },
   },
 })
 
@@ -162,4 +164,10 @@ vim.pack.add{
   { src = 'https://github.com/neovim/nvim-lspconfig' },
 }
 
+local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
+vim.lsp.config("gopls", {
+  capabilities = capabilities,
+})
+
+vim.lsp.enable("gopls")
