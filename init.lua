@@ -96,6 +96,15 @@ vim.api.nvim_create_autocmd("FileType", {
 
 require("render-markdown").setup({})
 
+-- ============================================================
+-- Editing Essentials
+-- ============================================================
+
+require("mini.ai").setup({})
+require("mini.comment").setup({})
+require("mini.pairs").setup({})
+require("mini.surround").setup({})
+
 
 -- ============================================================
 -- Telescope
@@ -136,7 +145,31 @@ vim.keymap.set("n", "<leader>fh", builtin.help_tags, {
 -- Neo-tree
 -- ============================================================
 
-require("neo-tree").setup({})
+require("neo-tree").setup({
+  filesystem = {
+    window = {
+      mappings = {
+        ["gn"] = "open_in_nautilus",
+      },
+    },
+    commands = {
+      open_in_nautilus = function(state)
+        local node = state.tree:get_node()
+        if not node then
+          return
+        end
+
+        local path = node.path
+
+        if vim.fn.isdirectory(path) == 0 then
+          path = vim.fn.fnamemodify(path, ":h")
+        end
+
+        vim.fn.jobstart({ "nautilus", path }, { detach = true })
+      end,
+    },
+  },
+})
 
 vim.api.nvim_create_autocmd("VimEnter", {
   callback = function()
@@ -147,31 +180,14 @@ vim.api.nvim_create_autocmd("VimEnter", {
   end,
 })
 
-require("neo-tree").setup({
-    filesystem = {
-      window = {
-        mappings = {
-          ["gn"] = "open_in_nautilus",
-        },
-      },
-      commands = {
-        open_in_nautilus = function(state)
-          local node = state.tree:get_node()
-          if not node then
-            return
-          end
-
-          local path = node.path
-
-          if vim.fn.isdirectory(path) == 0 then
-            path = vim.fn.fnamemodify(path, ":h")
-          end
-
-          vim.fn.jobstart({ "nautilus", path }, { detach = true })
-        end,
-      },
-    },
+vim.keymap.set("n", "<leader>e", function()
+  require("neo-tree.command").execute({
+    toggle = true,
+    position = "left",
   })
+end, {
+  desc = "Toggle file tree",
+})
 -- ============================================================
 -- Completion
 -- ============================================================
@@ -179,9 +195,39 @@ require("neo-tree").setup({
 local cmp = require("cmp")
 
 cmp.setup({
+  completion = {
+    completeopt = "menu,menuone,noinsert",
+  },
+  snippet = {
+    expand = function(args)
+      vim.snippet.expand(args.body)
+    end,
+  },
+  mapping = cmp.mapping.preset.insert({
+    ["<C-Space>"] = cmp.mapping.complete(),
+    ["<CR>"] = cmp.mapping.confirm({ select = true }),
+    ["<Tab>"] = cmp.mapping(function(fallback)
+      if cmp.visible() then
+        cmp.select_next_item()
+      else
+        fallback()
+      end
+    end, { "i", "s" }),
+    ["<S-Tab>"] = cmp.mapping(function(fallback)
+      if cmp.visible() then
+        cmp.select_prev_item()
+      else
+        fallback()
+      end
+    end, { "i", "s" }),
+  }),
   sources = {
-    { name = "buffer" },
     { name = "nvim_lsp" },
+    { name = "buffer" },
+  },
+  window = {
+    completion = cmp.config.window.bordered(),
+    documentation = cmp.config.window.bordered(),
   },
 })
 
@@ -199,6 +245,66 @@ cmp.setup.cmdline({ "/", "?" }, {
   sources = {
     { name = "buffer" },
   },
+})
+
+-- ============================================================
+-- LSP UX / Diagnostics
+-- ============================================================
+
+vim.diagnostic.config({
+  severity_sort = true,
+  float = {
+    border = "rounded",
+    source = "if_many",
+  },
+  signs = true,
+  underline = true,
+  update_in_insert = false,
+  virtual_text = {
+    spacing = 2,
+    source = "if_many",
+  },
+})
+
+vim.api.nvim_create_autocmd("LspAttach", {
+  callback = function(event)
+    local client = assert(vim.lsp.get_client_by_id(event.data.client_id))
+    local map = function(mode, lhs, rhs, desc)
+      vim.keymap.set(mode, lhs, rhs, {
+        buffer = event.buf,
+        desc = desc,
+      })
+    end
+
+    map("n", "gd", vim.lsp.buf.definition, "Go to definition")
+    map("n", "gD", vim.lsp.buf.declaration, "Go to declaration")
+    map("n", "gi", vim.lsp.buf.implementation, "Go to implementation")
+    map("n", "gr", vim.lsp.buf.references, "List references")
+    map("n", "K", vim.lsp.buf.hover, "Hover")
+    map("n", "<leader>rn", vim.lsp.buf.rename, "Rename symbol")
+    map({ "n", "v" }, "<leader>ca", vim.lsp.buf.code_action, "Code action")
+    map("n", "<leader>f", function()
+      vim.lsp.buf.format({ async = false })
+    end, "Format buffer")
+    map("n", "<leader>d", vim.diagnostic.open_float, "Line diagnostics")
+    map("n", "[d", vim.diagnostic.goto_prev, "Previous diagnostic")
+    map("n", "]d", vim.diagnostic.goto_next, "Next diagnostic")
+    map("n", "<leader>q", vim.diagnostic.setloclist, "Diagnostics to loclist")
+
+    if client:supports_method("textDocument/documentHighlight") then
+      local group = vim.api.nvim_create_augroup("lsp-highlight-" .. event.buf, { clear = true })
+      vim.api.nvim_create_autocmd({ "CursorHold", "CursorHoldI" }, {
+        buffer = event.buf,
+        group = group,
+        callback = vim.lsp.buf.document_highlight,
+      })
+      vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+        buffer = event.buf,
+        group = group,
+        callback = vim.lsp.buf.clear_references,
+      })
+    end
+  end,
 })
 
 
@@ -268,6 +374,46 @@ local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
 vim.lsp.config("gopls", {
   capabilities = capabilities,
+  settings = {
+    gopls = {
+      analyses = {
+        unusedparams = true,
+      },
+      gofumpt = true,
+      staticcheck = true,
+    },
+  },
 })
 
 vim.lsp.enable("gopls")
+
+local go_lsp_group = vim.api.nvim_create_augroup("go-lsp-format", { clear = true })
+
+vim.api.nvim_create_autocmd("BufWritePre", {
+  group = go_lsp_group,
+  pattern = "*.go",
+  callback = function(event)
+    local params = vim.lsp.util.make_range_params(event.buf, "utf-8")
+    params.context = { only = { "source.organizeImports" } }
+
+    local results = vim.lsp.buf_request_sync(event.buf, "textDocument/codeAction", params, 1000)
+    if results then
+      for client_id, result in pairs(results) do
+        for _, action in ipairs(result.result or {}) do
+          if action.edit then
+            vim.lsp.util.apply_workspace_edit(action.edit, client_id)
+          end
+          if action.command then
+            vim.lsp.buf.execute_command(action.command)
+          end
+        end
+      end
+    end
+
+    vim.lsp.buf.format({
+      async = false,
+      bufnr = event.buf,
+      timeout_ms = 2000,
+    })
+  end,
+})
