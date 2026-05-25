@@ -1,3 +1,13 @@
+if vim.fn.has("nvim-0.12") == 0 then
+  vim.api.nvim_echo({
+    {
+      "This Neovim config requires Neovim 0.12+; detected an older version. Please upgrade Neovim.",
+      "ErrorMsg",
+    },
+  }, true, {})
+  return
+end
+
 -- ============================================================
 -- Keys
 -- ============================================================
@@ -137,7 +147,31 @@ vim.api.nvim_create_autocmd("VimEnter", {
   end,
 })
 
+require("neo-tree").setup({
+    filesystem = {
+      window = {
+        mappings = {
+          ["gn"] = "open_in_nautilus",
+        },
+      },
+      commands = {
+        open_in_nautilus = function(state)
+          local node = state.tree:get_node()
+          if not node then
+            return
+          end
 
+          local path = node.path
+
+          if vim.fn.isdirectory(path) == 0 then
+            path = vim.fn.fnamemodify(path, ":h")
+          end
+
+          vim.fn.jobstart({ "nautilus", path }, { detach = true })
+        end,
+      },
+    },
+  })
 -- ============================================================
 -- Completion
 -- ============================================================
