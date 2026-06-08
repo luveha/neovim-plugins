@@ -54,6 +54,7 @@ vim.pack.add({
 	"https://github.com/nvim-mini/mini.nvim",
 	"https://github.com/MeanderingProgrammer/render-markdown.nvim",
 	"https://github.com/nvim-telescope/telescope.nvim",
+	"https://github.com/brenoprata10/nvim-highlight-colors",
 
 	-- Completion
 	"https://github.com/hrsh7th/nvim-cmp",
@@ -64,6 +65,10 @@ vim.pack.add({
 
 	-- Terminal
 	"https://github.com/akinsho/toggleterm.nvim",
+
+	-- Rails
+	"https://github.com/tpope/vim-rails",
+	"https://github.com/tpope/vim-bundler",
 }, { load = true })
 
 vim.pack.add({
@@ -87,15 +92,37 @@ require("nvim-treesitter").setup({
 	install_dir = vim.fn.stdpath("data") .. "/site",
 })
 
+local treesitter_parser_by_filetype = {
+	eruby = "embedded_template",
+}
+
 vim.api.nvim_create_autocmd("FileType", {
-	pattern = { "go", "lua", "vim", "odin" },
+	pattern = {
+		"css",
+		"eruby",
+		"go",
+		"html",
+		"javascript",
+		"json",
+		"lua",
+		"odin",
+		"ruby",
+		"scss",
+		"sql",
+		"typescript",
+		"vim",
+		"yaml",
+	},
 	callback = function()
 		local ok = pcall(vim.treesitter.start)
 		if not ok then
+			local parser = treesitter_parser_by_filetype[vim.bo.filetype] or vim.bo.filetype
+
 			vim.schedule(function()
 				vim.notify(
 					"Tree-sitter parser missing for " ..
-					vim.bo.filetype .. '. Run :TSInstall ' .. vim.bo.filetype,
+					vim.bo.filetype ..
+						'. Run :lua require("nvim-treesitter").install({ "' .. parser .. '" })',
 					vim.log.levels.WARN
 				)
 			end)
@@ -104,9 +131,13 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 
 vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
-	pattern = "*.odin",
-	callback = function()
-		vim.bo.filetype = "odin"
+	pattern = { "*.odin", "*.html.erb", "*.erb" },
+	callback = function(event)
+		if event.file:match("%.odin$") then
+			vim.bo.filetype = "odin"
+		else
+			vim.bo.filetype = "eruby"
+		end
 	end,
 })
 
@@ -122,6 +153,16 @@ vim.api.nvim_create_autocmd("FileType", {
 -- ============================================================
 
 require("render-markdown").setup({})
+
+-- ============================================================
+-- Color Highlighting
+-- ============================================================
+
+require("nvim-highlight-colors").setup({
+	render = "virtual",
+	enable_named_colors = false,
+	enable_tailwind = true,
+})
 
 -- ============================================================
 -- Editing Essentials
@@ -430,6 +471,15 @@ vim.pack.add({
 
 local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
+local function enable_lsp(name, executable)
+	if executable and vim.fn.executable(executable) == 0 then
+		return false
+	end
+
+	vim.lsp.enable(name)
+	return true
+end
+
 vim.lsp.config("gopls", {
 	capabilities = capabilities,
 	settings = {
@@ -489,9 +539,100 @@ vim.lsp.config("lua_ls", {
 	},
 })
 
-vim.lsp.enable("gopls")
+local ruby_lsp_cmd = { "ruby-lsp" }
+
+if vim.fn.executable("ruby-lsp") == 0 and vim.fn.executable("bundle") == 1 then
+	ruby_lsp_cmd = { "bundle", "exec", "ruby-lsp" }
+end
+
+vim.lsp.config("ruby_lsp", {
+	capabilities = capabilities,
+	cmd = ruby_lsp_cmd,
+	filetypes = { "ruby", "eruby" },
+	root_markers = { "Gemfile", ".ruby-version", ".ruby-lsp", ".git" },
+	init_options = {
+		formatter = "auto",
+		linters = { "rubocop" },
+		addonSettings = {
+			["Ruby LSP Rails"] = {
+				enablePendingMigrationsPrompt = false,
+			},
+		},
+	},
+})
+
+vim.lsp.config("erb_lint", {
+	capabilities = capabilities,
+	filetypes = { "eruby" },
+	root_markers = { ".erb-lint.yml", ".erb-lint.yaml", "Gemfile", ".git" },
+})
+
+vim.lsp.config("html", {
+	capabilities = capabilities,
+	filetypes = { "html", "eruby" },
+})
+
+vim.lsp.config("cssls", {
+	capabilities = capabilities,
+})
+
+vim.lsp.config("tailwindcss", {
+	capabilities = capabilities,
+	root_markers = {
+		"tailwind.config.js",
+		"tailwind.config.cjs",
+		"tailwind.config.mjs",
+		"tailwind.config.ts",
+		"postcss.config.js",
+		"postcss.config.cjs",
+		"package.json",
+		"Gemfile",
+		".git",
+	},
+	filetypes = {
+		"css",
+		"eruby",
+		"html",
+		"javascript",
+		"javascriptreact",
+		"ruby",
+		"scss",
+		"typescript",
+		"typescriptreact",
+	},
+	settings = {
+		tailwindCSS = {
+			includeLanguages = {
+				eruby = "html",
+				ruby = "html",
+			},
+		},
+	},
+})
+
+vim.lsp.config("jsonls", {
+	capabilities = capabilities,
+})
+
+vim.lsp.config("yamlls", {
+	capabilities = capabilities,
+	settings = {
+		yaml = {
+			keyOrdering = false,
+		},
+	},
+})
+
+enable_lsp("gopls", "gopls")
 vim.lsp.enable("ols")
 vim.lsp.enable("lua_ls")
+enable_lsp("ruby_lsp", ruby_lsp_cmd[1])
+enable_lsp("erb_lint", "erb_lint")
+enable_lsp("html", "vscode-html-language-server")
+enable_lsp("cssls", "vscode-css-language-server")
+enable_lsp("tailwindcss", "tailwindcss-language-server")
+enable_lsp("jsonls", "vscode-json-language-server")
+enable_lsp("yamlls", "yaml-language-server")
 
 local go_lsp_group = vim.api.nvim_create_augroup("go-lsp-format", { clear = true })
 
