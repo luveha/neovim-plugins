@@ -71,6 +71,117 @@ vim.pack.add({
 	"https://github.com/tpope/vim-bundler",
 }, { load = true })
 
+-- ============================================================
+-- Theme
+-- ============================================================
+
+vim.opt.background = "dark"
+
+local function apply_rubymine_darcula()
+	local colors = {
+		bg = "#2b2b2b",
+		bg_alt = "#323232",
+		bg_float = "#3c3f41",
+		fg = "#a9b7c6",
+		fg_dim = "#808080",
+		selection = "#214283",
+		border = "#555555",
+		orange = "#cc7832",
+		green = "#6a8759",
+		blue = "#6897bb",
+		yellow = "#ffc66d",
+		purple = "#9876aa",
+		red = "#bc3f3c",
+	}
+
+	local groups = {
+		Normal = { fg = colors.fg, bg = colors.bg },
+		NormalFloat = { fg = colors.fg, bg = colors.bg_float },
+		FloatBorder = { fg = colors.border, bg = colors.bg_float },
+		SignColumn = { bg = colors.bg },
+		LineNr = { fg = colors.fg_dim, bg = colors.bg },
+		CursorLine = { bg = colors.bg_alt },
+		CursorLineNr = { fg = colors.yellow, bg = colors.bg_alt },
+		Visual = { bg = colors.selection },
+		Search = { fg = colors.bg, bg = colors.yellow },
+		IncSearch = { fg = colors.bg, bg = colors.orange },
+		StatusLine = { fg = colors.fg, bg = colors.bg_float },
+		StatusLineNC = { fg = colors.fg_dim, bg = colors.bg_alt },
+		WinSeparator = { fg = colors.border, bg = colors.bg },
+		Pmenu = { fg = colors.fg, bg = colors.bg_float },
+		PmenuSel = { fg = colors.fg, bg = colors.selection },
+
+		Comment = { fg = colors.fg_dim, italic = true },
+		Constant = { fg = colors.blue },
+		String = { fg = colors.green },
+		Character = { fg = colors.green },
+		Number = { fg = colors.blue },
+		Boolean = { fg = colors.blue },
+		Float = { fg = colors.blue },
+		Identifier = { fg = colors.fg },
+		Function = { fg = colors.yellow },
+		Statement = { fg = colors.orange },
+		Conditional = { fg = colors.orange },
+		Repeat = { fg = colors.orange },
+		Label = { fg = colors.orange },
+		Operator = { fg = colors.fg },
+		Keyword = { fg = colors.orange },
+		Exception = { fg = colors.orange },
+		PreProc = { fg = colors.orange },
+		Type = { fg = colors.fg },
+		Special = { fg = colors.purple },
+		Error = { fg = colors.red },
+		Todo = { fg = colors.yellow, bold = true },
+
+		["@comment"] = { link = "Comment" },
+		["@constant"] = { link = "Constant" },
+		["@constant.builtin"] = { fg = colors.blue, italic = true },
+		["@string"] = { link = "String" },
+		["@string.special"] = { fg = colors.green },
+		["@number"] = { link = "Number" },
+		["@boolean"] = { link = "Boolean" },
+		["@function"] = { link = "Function" },
+		["@function.call"] = { link = "Function" },
+		["@function.method"] = { link = "Function" },
+		["@function.method.call"] = { link = "Function" },
+		["@constructor"] = { fg = colors.fg },
+		["@keyword"] = { link = "Keyword" },
+		["@keyword.function"] = { link = "Keyword" },
+		["@keyword.return"] = { link = "Keyword" },
+		["@keyword.conditional"] = { link = "Keyword" },
+		["@keyword.repeat"] = { link = "Keyword" },
+		["@operator"] = { link = "Operator" },
+		["@type"] = { link = "Type" },
+		["@type.builtin"] = { fg = colors.fg },
+		["@variable"] = { fg = colors.fg },
+		["@variable.builtin"] = { fg = colors.purple, italic = true },
+		["@variable.member"] = { fg = colors.purple },
+		["@variable.parameter"] = { fg = colors.fg },
+		["@property"] = { fg = colors.purple },
+		["@attribute"] = { fg = colors.yellow },
+		["@module"] = { fg = colors.fg },
+		["@punctuation"] = { fg = colors.fg },
+		["@tag"] = { fg = colors.orange },
+		["@tag.attribute"] = { fg = colors.yellow },
+		["@tag.delimiter"] = { fg = colors.fg_dim },
+
+		DiagnosticError = { fg = colors.red },
+		DiagnosticWarn = { fg = colors.yellow },
+		DiagnosticInfo = { fg = colors.blue },
+		DiagnosticHint = { fg = colors.green },
+	}
+
+	for group, opts in pairs(groups) do
+		vim.api.nvim_set_hl(0, group, opts)
+	end
+end
+
+apply_rubymine_darcula()
+
+vim.api.nvim_create_autocmd("ColorScheme", {
+	callback = apply_rubymine_darcula,
+})
+
 vim.pack.add({
 	-- File tree
 	{
@@ -92,37 +203,48 @@ require("nvim-treesitter").setup({
 	install_dir = vim.fn.stdpath("data") .. "/site",
 })
 
+local treesitter_parsers = {
+	"css",
+	"embedded_template",
+	"go",
+	"html",
+	"javascript",
+	"json",
+	"lua",
+	"odin",
+	"ruby",
+	"scss",
+	"sql",
+	"typescript",
+	"vim",
+	"yaml",
+}
+
+if vim.fn.executable("tree-sitter") == 1 then
+	require("nvim-treesitter").install(treesitter_parsers)
+end
+
 local treesitter_parser_by_filetype = {
 	eruby = "embedded_template",
 }
 
 vim.api.nvim_create_autocmd("FileType", {
-	pattern = {
-		"css",
-		"eruby",
-		"go",
-		"html",
-		"javascript",
-		"json",
-		"lua",
-		"odin",
-		"ruby",
-		"scss",
-		"sql",
-		"typescript",
-		"vim",
-		"yaml",
-	},
+	pattern = vim.tbl_map(function(parser)
+		return parser == "embedded_template" and "eruby" or parser
+	end, treesitter_parsers),
 	callback = function()
 		local ok = pcall(vim.treesitter.start)
 		if not ok then
 			local parser = treesitter_parser_by_filetype[vim.bo.filetype] or vim.bo.filetype
+			local install_hint = '. Run :lua require("nvim-treesitter").install({ "' .. parser .. '" })'
+
+			if vim.fn.executable("tree-sitter") == 0 then
+				install_hint = install_hint .. " after installing the tree-sitter CLI"
+			end
 
 			vim.schedule(function()
 				vim.notify(
-					"Tree-sitter parser missing for " ..
-					vim.bo.filetype ..
-						'. Run :lua require("nvim-treesitter").install({ "' .. parser .. '" })',
+					"Tree-sitter parser missing for " .. vim.bo.filetype .. install_hint,
 					vim.log.levels.WARN
 				)
 			end)
