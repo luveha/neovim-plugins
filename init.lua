@@ -69,6 +69,12 @@ vim.pack.add({
 	-- Rails
 	"https://github.com/tpope/vim-rails",
 	"https://github.com/tpope/vim-bundler",
+
+	-- Java
+	"https://github.com/mfussenegger/nvim-jdtls",
+
+	-- Scala
+	"https://github.com/scalameta/nvim-metals",
 }, { load = true })
 
 -- ============================================================
@@ -207,6 +213,9 @@ local treesitter_parsers = {
 	"css",
 	"embedded_template",
 	"go",
+	"groovy",
+	"java",
+	"scala",
 	"html",
 	"javascript",
 	"json",
@@ -320,6 +329,11 @@ require("mini.clue").setup({
 		{ mode = "n", keys = "<Leader>fh", desc = "Help tags" },
 		{ mode = "n", keys = "<Leader>gg", desc = "Open LazyGit" },
 		{ mode = "n", keys = "<Leader>q",  desc = "Diagnostics to loclist" },
+		{ mode = "n", keys = "<Leader>?",  desc = "Show keymaps" },
+		{ mode = "n", keys = "<Leader>m",  desc = "+metals" },
+		{ mode = "n", keys = "<Leader>mc", desc = "Metals commands" },
+		{ mode = "n", keys = "<Leader>mh", desc = "Metals hover worksheet" },
+		{ mode = "n", keys = "<Leader>jr", desc = "Run current Java class" },
 		{ mode = "n", keys = "<Leader>rn", desc = "Rename symbol" },
 	},
 })
@@ -360,6 +374,33 @@ vim.keymap.set("n", "<leader>fb", builtin.buffers, {
 vim.keymap.set("n", "<leader>fh", builtin.help_tags, {
 	desc = "Help tags",
 })
+
+vim.keymap.set("n", "<leader>?", function()
+	local pickers = require("telescope.pickers")
+	local finders = require("telescope.finders")
+	local conf = require("telescope.config").values
+	local results = {}
+
+	for _, mode in ipairs({ "n", "v" }) do
+		for _, map in ipairs(vim.api.nvim_get_keymap(mode)) do
+			if map.desc and map.lhs:sub(1, 1) == " " then
+				table.insert(results, { mode = mode, lhs = map.lhs, desc = map.desc })
+			end
+		end
+	end
+
+	pickers.new({}, {
+		prompt_title = "Custom Keymaps",
+		finder = finders.new_table({
+			results = results,
+			entry_maker = function(e)
+				local display = string.format("[%s]  %-20s  %s", e.mode, e.lhs, e.desc)
+				return { value = e, display = display, ordinal = e.lhs .. " " .. e.desc }
+			end,
+		}),
+		sorter = conf.generic_sorter({}),
+	}):find()
+end, { desc = "Show keymaps" })
 
 
 -- ============================================================
@@ -784,6 +825,114 @@ vim.api.nvim_create_autocmd("BufWritePre", {
 			bufnr = event.buf,
 			timeout_ms = 2000,
 		})
+	end,
+})
+
+-- ============================================================
+-- Java / jdtls
+-- ============================================================
+
+vim.api.nvim_create_autocmd("FileType", {
+	pattern = "java",
+	callback = function()
+		if vim.fn.executable("jdtls") == 0 then
+			return
+		end
+
+		local project_name = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+		local workspace_dir = vim.fn.stdpath("cache") .. "/jdtls/" .. project_name
+
+		local root = require("jdtls.setup").find_root({ "build.gradle", "build.gradle.kts", "gradlew", "pom.xml", ".git" })
+
+		require("jdtls").start_or_attach({
+			capabilities = capabilities,
+			cmd = { "jdtls", "--data", workspace_dir },
+			root_dir = root,
+			settings = {
+				java = {
+					format = { enabled = true },
+					saveActions = { organizeImports = true },
+					inlayHints = { parameterNames = { enabled = "all" } },
+				},
+			},
+			init_options = { bundles = {} },
+		})
+
+		local function java_class_name()
+			local file = vim.fn.expand("%:p")
+			local src_root = root .. "/src/main/java/"
+			if file:sub(1, #src_root) == src_root then
+				return (file:sub(#src_root + 1)):gsub("/", "."):gsub("%.java$", "")
+			end
+			-- fallback: just the bare filename without extension
+			return vim.fn.expand("%:t:r")
+		end
+
+		map("n", "<leader>jr", function()
+			local class = java_class_name()
+			local gradlew = root .. "/gradlew"
+			local runner = vim.fn.filereadable(gradlew) == 1 and gradlew or "gradle"
+			require("toggleterm.terminal").Terminal:new({
+				cmd = runner .. " run -PmainClass=" .. class,
+				dir = root,
+				direction = "float",
+				close_on_exit = false,
+			}):open()
+		end, "Run current Java class")
+	end,
+})
+
+local java_lsp_group = vim.api.nvim_create_augroup("java-lsp-format", { clear = true })
+
+vim.api.nvim_create_autocmd("BufWritePre", {
+	group = java_lsp_group,
+	pattern = "*.java",
+	callback = function()
+		require("jdtls").organize_imports()
+		vim.lsp.buf.format({ async = false, timeout_ms = 2000 })
+	end,
+})
+
+-- ============================================================
+-- Scala / Metals
+-- ============================================================
+
+vim.api.nvim_create_autocmd("FileType", {
+	pattern = { "scala", "sbt" },
+	callback = function()
+		if vim.fn.executable("metals") == 0 then
+			return
+		end
+
+		local metals = require("metals")
+		local config = metals.bare_config()
+
+		config.capabilities = capabilities
+		config.settings = {
+			showImplicitArguments = true,
+			showInferredType = true,
+			excludedPackages = { "akka.actor.typed.javadsl", "com.github.swagger.akka.javadsl" },
+		}
+
+		config.on_attach = function(_, bufnr)
+			local map = function(mode, lhs, rhs, desc)
+				vim.keymap.set(mode, lhs, rhs, { buffer = bufnr, desc = desc })
+			end
+			map("n", "<leader>mc", metals.commands, "Metals commands")
+			map("n", "<leader>mh", metals.hover_worksheet, "Metals hover worksheet")
+		end
+
+		metals.initialize_or_attach(config)
+	end,
+})
+
+local scala_lsp_group = vim.api.nvim_create_augroup("scala-lsp-format", { clear = true })
+
+vim.api.nvim_create_autocmd("BufWritePre", {
+	group = scala_lsp_group,
+	pattern = { "*.scala", "*.sbt" },
+	callback = function(event)
+		vim.lsp.buf.format({ async = false, bufnr = event.buf, timeout_ms = 2000 })
 	end,
 })
 
