@@ -18,6 +18,17 @@ vim.g.mapleader = " "
 vim.keymap.set("t", "<C-n>", [[<C-\><C-n>]])
 
 -- ============================================================
+-- Providers
+-- ============================================================
+
+-- Dedicated venv for the Python remote plugin host (pynvim) + Jupyter.
+-- Created with: python3 -m venv ~/.venvs/neovim && pip install pynvim jupyter ipykernel
+local python_host = vim.fn.expand("$HOME/.venvs/neovim/bin/python")
+if vim.fn.executable(python_host) == 1 then
+	vim.g.python3_host_prog = python_host
+end
+
+-- ============================================================
 -- Editor Settings
 -- ============================================================
 
@@ -75,6 +86,11 @@ vim.pack.add({
 
 	-- Scala
 	"https://github.com/scalameta/nvim-metals",
+
+	-- Jupyter / Molten
+	"https://github.com/benlubas/molten-nvim",
+	"https://github.com/3rd/image.nvim",
+	"https://github.com/goerz/jupytext.nvim",
 }, { load = true })
 
 -- ============================================================
@@ -220,6 +236,8 @@ local treesitter_parsers = {
 	"javascript",
 	"json",
 	"lua",
+	"markdown",
+	"markdown_inline",
 	"odin",
 	"ruby",
 	"scss",
@@ -283,7 +301,31 @@ vim.api.nvim_create_autocmd("FileType", {
 -- Render Markdown
 -- ============================================================
 
-require("render-markdown").setup({})
+-- Notebook markdown cells are often authored as raw HTML (e.g. bulma
+-- `<article class="message">` callouts). render-markdown only hides HTML tags
+-- it's told about, so list the common container/inline tags: their start/end
+-- markup is concealed and the inner text is left to render as prose.
+local html_conceal_tags = {
+	-- containers / blocks
+	"article", "aside", "section", "div", "header", "footer", "nav",
+	"figure", "figcaption", "details", "summary", "p", "center", "blockquote",
+	-- lists
+	"ul", "ol", "li",
+	-- tables
+	"table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption",
+	-- inline
+	"span", "a", "i", "b", "u", "small", "strong", "em", "code", "label", "abbr",
+}
+local html_tag = {}
+for _, tag in ipairs(html_conceal_tags) do
+	html_tag[tag] = {}
+end
+
+require("render-markdown").setup({
+	html = {
+		tag = html_tag,
+	},
+})
 
 -- ============================================================
 -- Color Highlighting
@@ -333,6 +375,15 @@ require("mini.clue").setup({
 		{ mode = "n", keys = "<Leader>m",  desc = "+metals" },
 		{ mode = "n", keys = "<Leader>mc", desc = "Metals commands" },
 		{ mode = "n", keys = "<Leader>mh", desc = "Metals hover worksheet" },
+		{ mode = "n", keys = "<Leader>j",  desc = "+jupyter/java" },
+		{ mode = "n", keys = "<Leader>ji", desc = "Molten init kernel" },
+		{ mode = "n", keys = "<Leader>jj", desc = "Molten run cell/block" },
+		{ mode = "n", keys = "<Leader>jl", desc = "Molten evaluate line" },
+		{ mode = "n", keys = "<Leader>jc", desc = "Molten re-evaluate cell" },
+		{ mode = "n", keys = "<Leader>je", desc = "Molten evaluate operator" },
+		{ mode = "n", keys = "<Leader>jo", desc = "Molten enter output" },
+		{ mode = "n", keys = "<Leader>jh", desc = "Molten hide output" },
+		{ mode = "n", keys = "<Leader>jx", desc = "Molten delete cell" },
 		{ mode = "n", keys = "<Leader>jr", desc = "Run current Java class" },
 		{ mode = "n", keys = "<Leader>rn", desc = "Rename symbol" },
 	},
@@ -442,6 +493,8 @@ vim.api.nvim_create_autocmd("VimEnter", {
 	end,
 })
 
+vim.keymap.set("n", "<leader>qq", "<cmd>bd!<cr>", { desc = "Close buffer" })
+
 vim.keymap.set("n", "<leader>e", function()
 	require("neo-tree.command").execute({
 		toggle = true,
@@ -522,9 +575,9 @@ vim.diagnostic.config({
 	signs = true,
 	underline = true,
 	update_in_insert = false,
-	virtual_text = {
-		spacing = 2,
-		source = "if_many",
+	virtual_text = false,
+	virtual_lines = {
+		current_line = true,
 	},
 })
 
@@ -552,6 +605,18 @@ vim.api.nvim_create_autocmd("LspAttach", {
 		map("n", "[d", vim.diagnostic.goto_prev, "Previous diagnostic")
 		map("n", "]d", vim.diagnostic.goto_next, "Next diagnostic")
 		map("n", "<leader>q", vim.diagnostic.setloclist, "Diagnostics to loclist")
+
+		vim.api.nvim_create_autocmd("CursorHoldI", {
+			buffer = event.buf,
+			callback = function()
+				local node = vim.treesitter.get_node()
+				while node do
+					if node:type() == "for_expression" then return end
+					node = node:parent()
+				end
+				vim.lsp.buf.signature_help()
+			end,
+		})
 
 		if client:supports_method("textDocument/documentHighlight") then
 			local group = vim.api.nvim_create_augroup("lsp-highlight-" .. event.buf, { clear = true })
@@ -842,7 +907,7 @@ vim.api.nvim_create_autocmd("FileType", {
 		local project_name = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 		local workspace_dir = vim.fn.stdpath("cache") .. "/jdtls/" .. project_name
 
-		local root = require("jdtls.setup").find_root({ "build.gradle", "build.gradle.kts", "gradlew", "pom.xml", ".git" })
+		local root = require("jdtls.setup").find_root({ "settings.gradle", "settings.gradle.kts", "gradlew", "pom.xml", ".git" })
 
 		require("jdtls").start_or_attach({
 			capabilities = capabilities,
@@ -860,16 +925,19 @@ vim.api.nvim_create_autocmd("FileType", {
 
 		local function java_class_name()
 			local file = vim.fn.expand("%:p")
-			local src_root = root .. "/src/main/java/"
-			if file:sub(1, #src_root) == src_root then
-				return (file:sub(#src_root + 1)):gsub("/", "."):gsub("%.java$", "")
+			local rel = file:match("src/main/java/(.+)%.java$")
+			if rel then
+				return (rel:gsub("/", "."))
 			end
-			-- fallback: just the bare filename without extension
-			return vim.fn.expand("%:t:r")
+			return nil
 		end
 
-		map("n", "<leader>jr", function()
+		vim.keymap.set("n", "<leader>jr", function()
 			local class = java_class_name()
+			if not class then
+				vim.notify("Not a Java file under src/main/java", vim.log.levels.WARN)
+				return
+			end
 			local gradlew = root .. "/gradlew"
 			local runner = vim.fn.filereadable(gradlew) == 1 and gradlew or "gradle"
 			require("toggleterm.terminal").Terminal:new({
@@ -878,7 +946,7 @@ vim.api.nvim_create_autocmd("FileType", {
 				direction = "float",
 				close_on_exit = false,
 			}):open()
-		end, "Run current Java class")
+		end, { desc = "Run current Java class" })
 	end,
 })
 
@@ -953,6 +1021,42 @@ vim.api.nvim_create_autocmd("BufWritePre", {
 	end,
 })
 
+-- ============================================================
+-- scala-cli
+-- ============================================================
+
+local scala_term_win = nil
+
+local function scala_cli(cmd, target)
+	target = target or "."
+	if scala_term_win and vim.api.nvim_win_is_valid(scala_term_win) then
+		vim.api.nvim_set_current_win(scala_term_win)
+		local old_buf = vim.api.nvim_win_get_buf(scala_term_win)
+		local job_id = vim.b[old_buf].terminal_job_id
+		if job_id then pcall(vim.fn.jobstop, job_id) end
+		vim.cmd("term scala-cli " .. cmd .. " " .. vim.fn.shellescape(target))
+		vim.api.nvim_buf_delete(old_buf, { force = true })
+	else
+		vim.cmd("botright split | resize 15 | term scala-cli " .. cmd .. " " .. vim.fn.shellescape(target))
+		scala_term_win = vim.api.nvim_get_current_win()
+	end
+end
+
+vim.api.nvim_create_autocmd("FileType", {
+	pattern = { "scala", "sbt" },
+	callback = function(event)
+		local map = function(lhs, rhs, desc)
+			vim.keymap.set("n", lhs, rhs, { buffer = event.buf, desc = desc })
+		end
+		map("<leader>scc", function() scala_cli("compile") end,                   "scala-cli compile")
+		map("<leader>sct", function() scala_cli("test") end,                      "scala-cli test")
+		map("<leader>scw", function() scala_cli("test -w") end,                   "scala-cli test -w (watch)")
+		map("<leader>scr", function() scala_cli("repl") end,                      "scala-cli repl")
+		map("<leader>sce", function() scala_cli("run", vim.fn.expand("%:p")) end, "scala-cli run current file")
+		map("<leader>scx", function() scala_cli("clean") end,                     "scala-cli clean")
+	end,
+})
+
 local lua_lsp_group = vim.api.nvim_create_augroup("lua-lsp-format", { clear = true })
 
 vim.api.nvim_create_autocmd("BufWritePre", {
@@ -969,3 +1073,120 @@ vim.api.nvim_create_autocmd("BufWritePre", {
 		})
 	end,
 })
+
+-- ============================================================
+-- Jupyter / Molten
+-- ============================================================
+
+-- image.nvim renders inline plots/images. Ghostty speaks the Kitty graphics
+-- protocol, and the ImageMagick CLI (`magick`) handles conversion, so no
+-- luarocks/magick rock is required.
+require("image").setup({
+	backend = "kitty",
+	processor = "magick_cli",
+	integrations = {
+		markdown = { enabled = false },
+		neorg = { enabled = false },
+	},
+	max_width = 100,
+	max_height = 12,
+	max_height_window_percentage = math.huge,
+	max_width_window_percentage = math.huge,
+	window_overlap_clear_enabled = true,
+	window_overlap_clear_ft_ignore = { "cmp_menu", "cmp_docs", "" },
+})
+
+-- Molten writes kernel connection files into the Jupyter runtime dir; if it is
+-- missing, MoltenInit fails with "No such file or directory: .../kernel-*.json".
+pcall(vim.fn.mkdir, vim.fn.expand("$HOME/Library/Jupyter/runtime"), "p")
+
+-- jupytext transparently converts .ipynb <-> a markdown buffer on open/save, so
+-- notebooks are editable text instead of raw JSON. The "markdown" format keeps
+-- markdown cells as real markdown (rendered by render-markdown.nvim) and turns
+-- code cells into ```python fences that Molten evaluates. Requires the `jupytext`
+-- CLI on PATH (installed in the neovim venv, symlinked to /opt/homebrew/bin).
+require("jupytext").setup({
+	format = "markdown",
+})
+
+-- Molten globals (read when a kernel is initialized). Tuned for image.nvim:
+-- outputs show as virtual text and only pop into a window on demand.
+vim.g.molten_image_provider = "image.nvim"
+vim.g.molten_output_win_max_height = 20
+vim.g.molten_auto_open_output = false
+vim.g.molten_wrap_output = true
+vim.g.molten_virt_text_output = true
+vim.g.molten_virt_lines_off_by_1 = true
+
+local function molten_map(lhs, rhs, desc, mode)
+	vim.keymap.set(mode or "n", lhs, rhs, { silent = true, desc = desc })
+end
+
+molten_map("<leader>ji", ":MoltenInit<CR>", "Molten: init kernel")
+molten_map("<leader>jl", ":MoltenEvaluateLine<CR>", "Molten: evaluate line")
+molten_map("<leader>jc", ":MoltenReevaluateCell<CR>", "Molten: re-evaluate cell")
+molten_map("<leader>je", ":MoltenEvaluateOperator<CR>", "Molten: evaluate operator")
+molten_map("<leader>jv", ":<C-u>MoltenEvaluateVisual<CR>gv", "Molten: evaluate selection", "v")
+molten_map("<leader>jo", ":noautocmd MoltenEnterOutput<CR>", "Molten: enter output")
+molten_map("<leader>jh", ":MoltenHideOutput<CR>", "Molten: hide output")
+molten_map("<leader>jx", ":MoltenDelete<CR>", "Molten: delete cell")
+molten_map("<leader>jr", ":MoltenRestart!<CR>", "Molten: restart kernel")
+
+-- Run the whole code cell under the cursor. In markdown notebooks (jupytext),
+-- cells are ```python fences; in .py files they are `# %%` blocks. Evaluates
+-- the enclosing block via Molten (kernel must be initialized first).
+local function molten_run_cell()
+	local total = vim.api.nvim_buf_line_count(0)
+	local cur = vim.api.nvim_win_get_cursor(0)[1]
+	local function line(n)
+		return vim.api.nvim_buf_get_lines(0, n - 1, n, false)[1] or ""
+	end
+
+	local s, e
+	if vim.bo.filetype == "markdown" then
+		-- Pair fences top-to-bottom; find the pair containing the cursor.
+		local fences = {}
+		for i = 1, total do
+			if line(i):match("^%s*```") then
+				fences[#fences + 1] = i
+			end
+		end
+		for k = 1, #fences - 1, 2 do
+			local open, close = fences[k], fences[k + 1]
+			if cur >= open and cur <= close then
+				s, e = open + 1, close - 1
+				break
+			end
+		end
+		if not s then
+			vim.notify("Not inside a code block", vim.log.levels.WARN)
+			return
+		end
+	else
+		-- `# %%` percent cells.
+		s, e = 1, total
+		for i = cur, 1, -1 do
+			if line(i):match("^#%s*%%%%") then
+				s = i + 1
+				break
+			end
+		end
+		for i = cur + 1, total do
+			if line(i):match("^#%s*%%%%") then
+				e = i - 1
+				break
+			end
+		end
+	end
+
+	if s > e then
+		vim.notify("Empty code block", vim.log.levels.WARN)
+		return
+	end
+	local ok, err = pcall(vim.fn.MoltenEvaluateRange, s, e)
+	if not ok then
+		vim.notify("Molten: " .. tostring(err) .. " (run :MoltenInit first?)", vim.log.levels.ERROR)
+	end
+end
+
+vim.keymap.set("n", "<leader>jj", molten_run_cell, { silent = true, desc = "Molten: run cell/block" })
