@@ -91,6 +91,7 @@ vim.pack.add({
 	"https://github.com/benlubas/molten-nvim",
 	"https://github.com/3rd/image.nvim",
 	"https://github.com/goerz/jupytext.nvim",
+	"https://github.com/jmbuhr/otter.nvim", -- LSP/completion inside notebook code cells
 }, { load = true })
 
 -- ============================================================
@@ -239,6 +240,7 @@ local treesitter_parsers = {
 	"markdown",
 	"markdown_inline",
 	"odin",
+	"python",
 	"ruby",
 	"scss",
 	"sql",
@@ -254,6 +256,10 @@ end
 local treesitter_parser_by_filetype = {
 	eruby = "embedded_template",
 }
+
+-- jupytext fences notebook code cells with the kernel language (```python3),
+-- but the parser is named `python`; alias so markdown injections resolve it.
+vim.treesitter.language.register("python", "python3")
 
 vim.api.nvim_create_autocmd("FileType", {
 	pattern = vim.tbl_map(function(parser)
@@ -327,6 +333,120 @@ require("render-markdown").setup({
 	},
 })
 
+-- Notebook headers use empty Bootstrap icon tags like
+-- `<i class="bi bi-exclamation-octagon-fill" style="color: red;"></i>`. These
+-- are webfont glyphs the terminal can't draw and render-markdown conceals them
+-- to nothing. Show a dot in each icon's `style="color: ..."` where the tag was
+-- so the color-coded markers survive.
+local bootstrap_color_map = {
+	red = "#ff5555", blue = "#5599ff", green = "#50fa7b", orange = "#ffb86c",
+	yellow = "#f1fa8c", purple = "#bd93f9", pink = "#ff79c6", cyan = "#8be9fd",
+	gray = "#888888", grey = "#888888",
+}
+local bootstrap_color_hl = {}
+local function bootstrap_hl(css)
+	if not css or css == "" then
+		return "Special"
+	end
+	local key = css:gsub("%s+", ""):lower()
+	local cached = bootstrap_color_hl[key]
+	if cached then
+		return cached
+	end
+	local fg = key:match("^#%x%x%x%x%x%x$") or bootstrap_color_map[key] or key
+	local hl = "BootstrapColor_" .. key:gsub("[^%w]", "_")
+	if not pcall(vim.api.nvim_set_hl, 0, hl, { fg = fg }) then
+		hl = "Special"
+	end
+	bootstrap_color_hl[key] = hl
+	return hl
+end
+
+local bootstrap_icon_ns = vim.api.nvim_create_namespace("bootstrap-icons")
+
+-- Colors of the Bootstrap icons on a line (nil entry = icon without a color),
+-- plus the byte column of the first icon.
+local function line_bootstrap_icons(text)
+	local colors, first_col = {}, nil
+	local col = 1
+	while true do
+		local s, e, attrs = text:find("<i[%s/>]([^>]*)>", col)
+		if not s then
+			break
+		end
+		if attrs:find("bi%-") then
+			colors[#colors + 1] = attrs:match("color%s*:%s*([^;\"']+)")
+			first_col = first_col or s
+		end
+		col = e + 1
+	end
+	return colors, first_col
+end
+
+-- True if the line holds only markup/whitespace (no visible prose) once tags
+-- are stripped -- i.e. it's purely part of the icon block.
+local function line_only_markup(text)
+	return text:gsub("<[^>]*>", ""):gsub("%s+", "") == ""
+end
+
+local function render_bootstrap_icons(buf)
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+	vim.api.nvim_buf_clear_namespace(buf, bootstrap_icon_ns, 0, -1)
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	local row = 1
+	while row <= #lines do
+		local colors, first_col = line_bootstrap_icons(lines[row])
+		if #colors == 0 then
+			row = row + 1
+		else
+			-- Gather following icon-only lines into one group so their dots sit
+			-- together instead of cascading down the indentation.
+			local group_end = row
+			local r = row + 1
+			while r <= #lines do
+				local more = line_bootstrap_icons(lines[r])
+				if #more > 0 and line_only_markup(lines[r]) then
+					vim.list_extend(colors, more)
+					group_end = r
+					r = r + 1
+				else
+					break
+				end
+			end
+
+			local virt = {}
+			for i, color in ipairs(colors) do
+				if i > 1 then
+					virt[#virt + 1] = { " ", "Normal" }
+				end
+				virt[#virt + 1] = { "●", bootstrap_hl(color) }
+			end
+			vim.api.nvim_buf_set_extmark(buf, bootstrap_icon_ns, row - 1, (first_col or 1) - 1, {
+				virt_text = virt,
+				virt_text_pos = "inline",
+			})
+			-- Hide the trailing icon lines so only the single dot row remains.
+			for cr = row + 1, group_end do
+				pcall(vim.api.nvim_buf_set_extmark, buf, bootstrap_icon_ns, cr - 1, 0, {
+					conceal_lines = "",
+				})
+			end
+			row = group_end + 1
+		end
+	end
+end
+
+local bootstrap_icon_group = vim.api.nvim_create_augroup("bootstrap-icons", { clear = true })
+vim.api.nvim_create_autocmd({ "BufWinEnter", "TextChanged", "TextChangedI", "InsertLeave" }, {
+	group = bootstrap_icon_group,
+	pattern = "*.ipynb",
+	callback = function(ev)
+		render_bootstrap_icons(ev.buf)
+	end,
+})
+
 -- ============================================================
 -- Color Highlighting
 -- ============================================================
@@ -384,6 +504,8 @@ require("mini.clue").setup({
 		{ mode = "n", keys = "<Leader>jo", desc = "Molten enter output" },
 		{ mode = "n", keys = "<Leader>jh", desc = "Molten hide output" },
 		{ mode = "n", keys = "<Leader>jx", desc = "Molten delete cell" },
+		{ mode = "n", keys = "<Leader>ja", desc = "Molten run all cells" },
+		{ mode = "n", keys = "<Leader>jb", desc = "Molten run cells above cursor" },
 		{ mode = "n", keys = "<Leader>jr", desc = "Run current Java class" },
 		{ mode = "n", keys = "<Leader>rn", desc = "Rename symbol" },
 	},
@@ -405,6 +527,12 @@ telescope.setup({
 			i = {
 				["<Esc>"] = require("telescope.actions").close,
 				["<C-n>"] = require("telescope.actions").close,
+				-- Cmd+V / right-click are terminal pastes that don't reach the
+				-- Telescope prompt; paste the system clipboard natively instead.
+				["<C-v>"] = function()
+					local text = vim.fn.getreg("+"):gsub("[\n\r]", " ")
+					vim.api.nvim_put({ text }, "c", false, true)
+				end,
 			},
 		},
 	},
@@ -537,6 +665,8 @@ cmp.setup({
 		end, { "i", "s" }),
 	}),
 	sources = {
+		-- otter.nvim runs an "otter-ls" LSP client for notebook code cells, so
+		-- its completions arrive through nvim_lsp too -- no separate source.
 		{ name = "nvim_lsp" },
 		{ name = "buffer" },
 	},
@@ -838,6 +968,20 @@ vim.lsp.config("tailwindcss", {
 	},
 })
 
+vim.lsp.config("basedpyright", {
+	capabilities = capabilities,
+	cmd = { home .. "/.venvs/neovim/bin/basedpyright-langserver", "--stdio" },
+	settings = {
+		basedpyright = {
+			-- Notebook snippets are informal; keep diagnostics helpful, not noisy.
+			analysis = {
+				typeCheckingMode = "basic",
+				diagnosticMode = "openFilesOnly",
+			},
+		},
+	},
+})
+
 vim.lsp.config("jsonls", {
 	capabilities = capabilities,
 })
@@ -861,6 +1005,31 @@ enable_lsp("cssls", "vscode-css-language-server")
 enable_lsp("tailwindcss", "tailwindcss-language-server")
 enable_lsp("jsonls", "vscode-json-language-server")
 enable_lsp("yamlls", "yaml-language-server")
+enable_lsp("basedpyright", home .. "/.venvs/neovim/bin/basedpyright-langserver")
+
+-- otter.nvim: give notebook code cells real LSP. It mirrors each embedded
+-- python chunk into a hidden buffer, runs basedpyright there, and proxies
+-- completion / diagnostics / hover / definition back to the markdown buffer.
+require("otter").setup({
+	buffers = {
+		set_filetype = true,
+		write_to_disk = false,
+	},
+	lsp = {
+		diagnostic_update_events = { "BufWritePost", "InsertLeave", "TextChanged" },
+	},
+})
+
+-- Activate otter only on jupytext notebook buffers (markdown backed by an
+-- .ipynb), not on ordinary markdown files.
+vim.api.nvim_create_autocmd("FileType", {
+	pattern = "markdown",
+	callback = function(event)
+		if vim.api.nvim_buf_get_name(event.buf):match("%.ipynb$") then
+			require("otter").activate({ "python" }, true, true, nil)
+		end
+	end,
+})
 
 local go_lsp_group = vim.api.nvim_create_augroup("go-lsp-format", { clear = true })
 
@@ -868,19 +1037,24 @@ vim.api.nvim_create_autocmd("BufWritePre", {
 	group = go_lsp_group,
 	pattern = "*.go",
 	callback = function(event)
-		local params = vim.lsp.util.make_range_params(event.buf, "utf-8")
-		params.context = { only = { "source.organizeImports" } }
+		-- make_range_params wants a *window* (0 = current), not a bufnr, and
+		-- apply_workspace_edit wants the client's offset encoding.
+		local win = vim.fn.bufwinid(event.buf)
+		if win == -1 then
+			win = 0
+		end
 
-		local results = vim.lsp.buf_request_sync(event.buf, "textDocument/codeAction", params, 1000)
-		if results then
-			for client_id, result in pairs(results) do
-				for _, action in ipairs(result.result or {}) do
-					if action.edit then
-						vim.lsp.util.apply_workspace_edit(action.edit, client_id)
-					end
-					if action.command then
-						vim.lsp.buf.execute_command(action.command)
-					end
+		local clients = vim.lsp.get_clients({ bufnr = event.buf, method = "textDocument/codeAction" })
+		for _, client in ipairs(clients) do
+			local params = vim.lsp.util.make_range_params(win, client.offset_encoding)
+			params.context = { only = { "source.organizeImports" }, diagnostics = {} }
+
+			local res = client:request_sync("textDocument/codeAction", params, 1000, event.buf)
+			for _, action in ipairs(res and res.result or {}) do
+				if action.edit then
+					vim.lsp.util.apply_workspace_edit(action.edit, client.offset_encoding)
+				elseif type(action.command) == "table" then
+					client:request("workspace/executeCommand", action.command, nil, event.buf)
 				end
 			end
 		end
@@ -1186,7 +1360,103 @@ local function molten_run_cell()
 	local ok, err = pcall(vim.fn.MoltenEvaluateRange, s, e)
 	if not ok then
 		vim.notify("Molten: " .. tostring(err) .. " (run :MoltenInit first?)", vim.log.levels.ERROR)
+		return
 	end
+	-- Molten only renders virtual-text output while the cursor is OUTSIDE the
+	-- evaluated range -- with the cursor inside the cell the output stays
+	-- hidden (molten-nvim#311, closed "not planned"). Nudge the cursor just
+	-- past the cell (onto the closing ``` / first line below) so the output
+	-- shows immediately, without jumping into the next cell.
+	vim.api.nvim_win_set_cursor(0, { math.min(e + 1, total), 0 })
 end
 
 vim.keymap.set("n", "<leader>jj", molten_run_cell, { silent = true, desc = "Molten: run cell/block" })
+
+-- Every code cell in the buffer as { s = first line, e = last line }, in order.
+-- Mirrors molten_run_cell's cell detection: ```fences in markdown, `# %%` in
+-- percent-format .py files.
+local function molten_cells()
+	local total = vim.api.nvim_buf_line_count(0)
+	local function line(n)
+		return vim.api.nvim_buf_get_lines(0, n - 1, n, false)[1] or ""
+	end
+
+	local cells = {}
+	if vim.bo.filetype == "markdown" then
+		local fences = {}
+		for i = 1, total do
+			if line(i):match("^%s*```") then
+				fences[#fences + 1] = i
+			end
+		end
+		for k = 1, #fences - 1, 2 do
+			local s, e = fences[k] + 1, fences[k + 1] - 1
+			if s <= e then
+				cells[#cells + 1] = { s = s, e = e }
+			end
+		end
+	else
+		local starts = {}
+		for i = 1, total do
+			if line(i):match("^#%s*%%%%") then
+				starts[#starts + 1] = i
+			end
+		end
+		if #starts == 0 then
+			cells[#cells + 1] = { s = 1, e = total }
+		else
+			for idx = 1, #starts do
+				local s = starts[idx] + 1
+				local e = (starts[idx + 1] or (total + 1)) - 1
+				if s <= e then
+					cells[#cells + 1] = { s = s, e = e }
+				end
+			end
+		end
+	end
+	return cells
+end
+
+-- Evaluate every cell (above_only = true stops at cells fully above the cursor,
+-- like Jupyter's "Run All Above").
+local function molten_run_cells(above_only)
+	-- Without an attached kernel, MoltenEvaluateRange pops the "initialize a
+	-- kernel" picker -- once per cell, and each pick spawns a new kernel. Check
+	-- the current buffer has a kernel and bail early with one message instead.
+	local ok_k, kernels = pcall(vim.fn.MoltenStatusLineKernels, true)
+	if not ok_k or kernels == "" then
+		vim.notify("Molten: no kernel attached -- run :MoltenInit first", vim.log.levels.WARN)
+		return
+	end
+
+	local cells = molten_cells()
+	local cur = vim.api.nvim_win_get_cursor(0)[1]
+	local ran = 0
+	for _, c in ipairs(cells) do
+		if not above_only or c.e < cur then
+			local ok, err = pcall(vim.fn.MoltenEvaluateRange, c.s, c.e)
+			if not ok then
+				vim.notify("Molten: " .. tostring(err) .. " (run :MoltenInit first?)", vim.log.levels.ERROR)
+				return
+			end
+			ran = ran + 1
+		end
+	end
+	vim.notify(("Molten: ran %d cell%s"):format(ran, ran == 1 and "" or "s"))
+end
+
+vim.api.nvim_create_user_command("MoltenRunAll", function()
+	molten_run_cells(false)
+end, { desc = "Molten: run every cell in the file" })
+
+vim.api.nvim_create_user_command("MoltenRunAbove", function()
+	molten_run_cells(true)
+end, { desc = "Molten: run every cell above the cursor" })
+
+vim.keymap.set("n", "<leader>ja", function()
+	molten_run_cells(false)
+end, { silent = true, desc = "Molten: run all cells" })
+
+vim.keymap.set("n", "<leader>jb", function()
+	molten_run_cells(true)
+end, { silent = true, desc = "Molten: run cells above cursor" })
